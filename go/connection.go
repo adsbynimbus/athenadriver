@@ -362,6 +362,9 @@ func (c *Connection) QueryContext(ctx context.Context, query string, namedArgs [
 	if pseudoCommand == PCGetQID {
 		return c.getHeaderlessSingleRowResultPage(ctx, queryID)
 	}
+
+	poolIntervaler := new(PoolIntervaler)
+
 WAITING_FOR_RESULT:
 	for {
 		statusResp, err := c.athenaAPI.GetQueryExecutionWithContext(ctx, &athena.GetQueryExecutionInput{
@@ -375,7 +378,7 @@ WAITING_FOR_RESULT:
 			obs.Scope().Counter(DriverName + ".failure.querycontext.getqueryexecutionwithcontext").Inc(1)
 			return nil, err
 		}
-		//statementType = statusResp.QueryExecution.StatementType
+		// statementType = statusResp.QueryExecution.StatementType
 		switch *statusResp.QueryExecution.Status.State {
 		case athena.QueryExecutionStateCancelled:
 			timeCanceled := time.Since(now)
@@ -432,7 +435,7 @@ WAITING_FOR_RESULT:
 			obs.Scope().Timer(DriverName + ".query.StopQueryExecution").Record(timeStopQueryExecution)
 			obs.Log(ErrorLevel, "query canceled", zap.String("queryID", queryID))
 			return nil, ctx.Err()
-		case <-time.After(PoolInterval * time.Second):
+		case <-poolIntervaler.Next():
 			if isQueryTimeOut(startOfStartQueryExecution, *statusResp.QueryExecution.StatementType, c.connector.config.GetServiceLimitOverride()) {
 				obs.Log(ErrorLevel, "Query timeout failure",
 					zap.String("workgroup", wg.Name),
@@ -446,6 +449,19 @@ WAITING_FOR_RESULT:
 	}
 
 	return NewRows(ctx, c.athenaAPI, queryID, c.connector.config, obs)
+}
+
+type PoolIntervaler struct {
+	n int
+}
+
+func (i *PoolIntervaler) Next() <-chan time.Time {
+	if i.n < len(PoolIntervalFirstN) {
+		d := time.Duration(PoolIntervalFirstN[i.n] * float64(time.Second))
+		i.n++
+		return time.After(d)
+	}
+	return time.After(PoolInterval * time.Second)
 }
 
 // Ping implements driver.Pinger interface.
