@@ -41,5 +41,8 @@ func (t *WGTags) AddTag(k string, v string) {
 
 // Get is a getter.
 func (t *WGTags) Get() []*athena.Tag {
+	if t == nil {
+		return []*athena.Tag{}
+	}
 	return t.tags
 }
